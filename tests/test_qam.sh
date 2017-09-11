@@ -1,11 +1,5 @@
 #!/bin/bash
 # $1 is the file from MTUI containing 'list-packages -w'
-#
-# Description:
-# * installation of the package
-# * the existance of the changelog
-# * The tagging of docker image
-# * the version of RPM vs Docker image
 
 # Colors for the output
 red='\033[0;31m'
@@ -35,34 +29,38 @@ while IFS='' read -r line || [[ -n "$line" ]]; do
       echo -e " ${red}FAIL${NC}: Changelog Test: rpm -q --changelog $PKG not found (building error)";
     fi
 
-    # Docker image
-    if echo $PKG | grep image > /dev/null; then
-      DIR="/tmp/$PKG"
-      mkdir "$DIR"
-      TARBALL=$(rpm -ql "$PKG" | grep "tar.xz")
-      tar -xf "$TARBALL" -C "$DIR"
-      HASH=$(cat "$DIR/manifest.json" | python -c 'import json,sys;obj=json.load(sys.stdin);print obj[0]["Config"][7:];')
-      #echo "IMAGE ID: $HASH"
-      FLAG=0
-      for container in `docker ps -q`; do
-        if docker inspect --format='{{.Image}}' $container | grep "$HASH" &> /dev/null; then
-          CONTAINER_NAME=$(docker inspect --format "{{title .Name}}" $container)
-          CONTAINER_IMAGE=$(docker inspect --format='{{.Config.Image}}' $container)
-          echo -e " ${green}PASS${NC}: Docker Tag Test: Container $container hash256 found to be used by $CONTAINER_NAME"
-          if echo $CONTAINER_IMAGE grep $version > /dev/null; then
-            echo -e " ${green}PASS${NC}: Consistency Test: RPM = $version and Docker = $CONTAINER_IMAGE -> are matching"
-          else
-            echo -e " ${red}FAIL${NC}: Consistency Test: RPM = $version and Docker = $CONTAINER_IMAGE -> are not matching"
+    if [ "$HOST" == "admin" ]; then
+      # Docker image
+      if echo $PKG | grep image > /dev/null; then
+        DIR="/tmp/$PKG"
+        mkdir "$DIR"
+        TARBALL=$(rpm -ql "$PKG" | grep "tar.xz")
+        tar -xf "$TARBALL" -C "$DIR"
+        HASH=$(cat "$DIR/manifest.json" | python -c 'import json,sys;obj=json.load(sys.stdin);print obj[0]["Config"][7:];')
+        #echo "IMAGE ID: $HASH"
+        FLAG=0
+        for container in `docker ps -q`; do
+          if docker inspect --format='{{.Image}}' $container | grep "$HASH" &> /dev/null; then
+            CONTAINER_NAME=$(docker inspect --format "{{title .Name}}" $container)
+            CONTAINER_IMAGE=$(docker inspect --format='{{.Config.Image}}' $container)
+            echo -e " ${green}PASS${NC}: Docker Tag Test: Container $container hash256 found to be used by $CONTAINER_NAME"
+            if echo $CONTAINER_IMAGE grep $version > /dev/null; then
+              echo -e " ${green}PASS${NC}: Consistency Test: RPM = $version and Docker = $CONTAINER_IMAGE -> are matching"
+            else
+              echo -e " ${red}FAIL${NC}: Consistency Test: RPM = $version and Docker = $CONTAINER_IMAGE -> are not matching"
+            fi
+            FLAG=1
           fi
-          FLAG=1
+        done
+        if [ "$FLAG" -eq 0 ]; then
+          NOT_IN_USE="$PKG"
+          echo -e " ${red}FAIL${NC}: Docker Tag Test: There is no running container using the $HASH base image id"
         fi
-      done
-      if [ "$FLAG" -eq 0 ]; then
-        NOT_IN_USE="$PKG"
-        echo -e " ${red}FAIL${NC}: Docker Tag Test: There is no running container using the $HASH base image id"
+        rm -r "$DIR"
+      else
+        echo -e " ${blue}SKIP:${NC} This package does not contain a docker image.";
       fi
-      rm -r "$DIR"
     else
-      echo -e " ${blue}SKIP:${NC} This package does not contain a docker image.";
+        echo -e " ${blue}SKIP:${NC} This not the admin node.";
     fi
 done < "$1"
